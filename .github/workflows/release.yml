@@ -1,0 +1,216 @@
+name: release
+
+on:
+  push:
+    tags:
+      # PanWatch tags are like 0.2.3 (no "v" prefix)
+      - '*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Docker tag to publish (e.g. 0.2.3)'
+        required: true
+        type: string
+      push_latest:
+        description: 'Also push :latest'
+        required: false
+        type: boolean
+        default: true
+      platforms:
+        description: 'Target platforms'
+        required: false
+        type: string
+        default: 'linux/amd64,linux/arm64'
+
+env:
+  IMAGE_NAME: sunxiao0721/panwatch
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system libs for WeasyPrint (PDF export tests)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 \
+            libcairo2 libcairo-gobject2 libgdk-pixbuf-2.0-0 \
+            libffi-dev libfontconfig1 fonts-noto-cjk
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: python -m pytest tests/ -x -q
+
+      - name: Run marketdata package tests
+        run: python -m pytest packages/marketdata/tests -q
+
+      - name: Resolve version
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            version="${{ inputs.version }}"
+            push_latest="${{ inputs.push_latest }}"
+            platforms="${{ inputs.platforms }}"
+          else
+            version="${{ github.ref_name }}"
+            push_latest="true"
+            platforms="linux/amd64,linux/arm64"
+          fi
+
+          version_no_v="$version"
+          if [[ "$version" == v* ]]; then
+            version_no_v="${version#v}"
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "version_no_v=$version_no_v" >> "$GITHUB_OUTPUT"
+          echo "push_latest=$push_latest" >> "$GITHUB_OUTPUT"
+          echo "platforms=$platforms" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ steps.vars.outputs.version }}
+            type=raw,value=${{ steps.vars.outputs.version_no_v }},enable=${{ steps.vars.outputs.version_no_v != steps.vars.outputs.version }}
+            type=raw,value=latest,enable=${{ steps.vars.outputs.push_latest == 'true' }}
+          labels: |
+            org.opencontainers.image.title=PanWatch
+            org.opencontainers.image.version=${{ steps.vars.outputs.version }}
+            org.opencontainers.image.source=${{ github.repositoryUrl }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ steps.vars.outputs.platforms }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.vars.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Generate release notes (tag push only)
+        if: ${{ github.event_name == 'push' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          current="${{ steps.vars.outputs.version }}"
+          repo="${{ github.repository }}"
+
+          # Find previous tag by semver sort (best effort).
+          prev=""
+          while IFS= read -r t; do
+            if [[ "$t" != "$current" ]]; then
+              prev="$t"
+              break
+            fi
+          done < <(git tag --list --sort=-v:refname)
+
+          echo "Current tag: $current"
+          if [[ -n "$prev" ]]; then
+            echo "Previous tag: $prev"
+            range="$prev..$current"
+          else
+            echo "Previous tag: (none)"
+            range="$current"
+          fi
+
+          {
+            echo "## Docker"
+            echo "- $IMAGE_NAME:$current"
+            echo "- $IMAGE_NAME:latest"
+            echo ""
+            echo "## Commits"
+            if [[ -n "$prev" ]]; then
+              echo "Compare: https://github.com/$repo/compare/$prev...$current"
+              echo ""
+              echo "Changes since $prev:"
+              echo ""
+              # Non-merge commits only (exclude MR/PR merges).
+              git log --no-merges --pretty=format:'- %s (%h)' "$range" || true
+            else
+              echo "First release tag."
+            fi
+            echo ""
+          } > release-notes.md
+
+      - name: Create GitHub Release (tag push only)
+        if: ${{ github.event_name == 'push' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.version }}
+          body_path: release-notes.md
+
+      - name: Send Telegram notification
+        if: ${{ github.event_name == 'push' }}
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          TAG="${{ steps.vars.outputs.version }}"
+          RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${TAG}"
+
+          # 获取 commit 变更列表
+          PREV_TAG=$(git tag --list --sort=-version:refname | grep -v "^${TAG}$" | head -n1)
+          if [ -n "$PREV_TAG" ]; then
+            COMMITS=$(git log --no-merges --pretty=format:"- %s" "$PREV_TAG"..HEAD)
+          else
+            COMMITS=$(git log --no-merges --pretty=format:"- %s")
+          fi
+
+          # 转义 Markdown 特殊字符，然后进行 URL 编码
+          COMMITS_ESCAPED=$(echo "$COMMITS" | sed 's/\*/\\*/g; s/_/\\_/g; s/\[/\\[/g; s/\]/\\]/g; s/`/\\`/g')
+          COMMITS_ENCODED=$(echo "$COMMITS_ESCAPED" | sed 's/$/%0A/g' | tr -d '\n')
+
+          # 构建消息
+          MESSAGE="📊 *PanWatch ${TAG}* 发布%0A%0A"
+          MESSAGE="${MESSAGE}🔗 [查看完整说明](${RELEASE_URL})%0A%0A"
+          MESSAGE="${MESSAGE}*变更内容*:%0A${COMMITS_ENCODED}"
+
+          # 发送到 Telegram
+          if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
+            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              -d "chat_id=${TELEGRAM_CHAT_ID}" \
+              -d "text=${MESSAGE}" \
+              -d "parse_mode=Markdown" \
+              -d "disable_web_page_preview=true"
+            echo "✅ Telegram notification sent successfully!"
+          else
+            echo "⚠️  Telegram credentials not configured, skipping notification"
+          fi

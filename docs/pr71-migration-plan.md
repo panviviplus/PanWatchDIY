@@ -2,7 +2,7 @@
 
 > **来源**: [PanWatch PR #71](https://github.com/TNT-Likely/PanWatch/pull/71) by zackzhangkai
 > **目标仓库**: [PanWatchDIY](https://github.com/panviviplus/PanWatchDIY)
-> **状态**: 第 0-4 批已完成 ✅ | 第 5 批 (行情UI增强) 待定
+> **状态**: 全部 5 批次已完成 ✅ | 施工文档归档
 
 ---
 
@@ -208,16 +208,16 @@ bash deploy.sh --skip-push  # 跳过代码推送
 
 ---
 
-### 第 5 批：行情与 UI 增强（⚠️ 可跳过）
+### 第 5 批：行情与 UI 增强（⚠️ 可跳过）✅ 已完成
 
 **目标**: 分时图、分钟K线、深度分析模式。
 
-- [ ] `frontend/.../IntradayChart.tsx`
-- [ ] 谨慎合并 `InteractiveKline.tsx`（分钟K线支持）
-- [ ] `src/core/providers/kline/tencent.py`
-- [ ] `src/collectors/kline_collector.py` 增强
-- [ ] `frontend/.../deep-analysis-modal.tsx` + `deep-analysis-mode-picker.tsx`
-- [ ] 首页指数扩展
+- [x] `frontend/.../IntradayChart.tsx`
+- [x] 谨慎合并 `InteractiveKline.tsx`（分钟K线支持）
+- [x] `src/core/providers/kline/tencent.py`
+- [x] `src/collectors/kline_collector.py` 增强
+- [x] `frontend/.../deep-analysis-modal.tsx`（已存在，TradingAgents 深度分析）
+- [x] 首页指数扩展
 
 ---
 

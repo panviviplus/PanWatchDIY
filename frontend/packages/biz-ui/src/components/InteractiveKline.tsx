@@ -7,6 +7,7 @@ type BusinessDay = { year: number; month: number; day: number }
 
 type KlineItem = {
   date: string
+  time?: string
   open: number
   close: number
   high: number
@@ -17,9 +18,18 @@ type KlineItem = {
 type KlinesResponse = {
   symbol: string
   market: string
-  days: number
+  days?: number
+  count?: number
   interval?: string
   klines: KlineItem[]
+}
+
+type KlineInterval = '5m' | '15m' | '30m' | '60m' | '1d' | '1w' | '1m'
+
+const MINUTE_INTERVALS: KlineInterval[] = ['5m', '15m', '30m', '60m']
+
+function isMinuteInterval(iv: string): iv is '5m' | '15m' | '30m' | '60m' {
+  return MINUTE_INTERVALS.includes(iv as KlineInterval)
 }
 
 type HoverTipRow = {
@@ -49,8 +59,35 @@ function parseBusinessDay(dateStr: string): BusinessDay | null {
   return { year: Number(m[1]), month: Number(m[2]), day: Number(m[3]) }
 }
 
+/** 将 "2024-01-15 09:35" 格式转为 Unix 时间戳(秒) */
+function parseMinuteTime(timeStr: string): number | null {
+  const s = String(timeStr || '').trim()
+  // 尝试完整日期时间格式
+  const m1 = s.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/)
+  if (m1) {
+    const d = new Date(Number(m1[1]), Number(m1[2]) - 1, Number(m1[3]), Number(m1[4]), Number(m1[5]))
+    return Math.floor(d.getTime() / 1000)
+  }
+  // 尝试仅时间格式: "09:35"
+  const m2 = s.match(/^(\d{2}):(\d{2})/)
+  if (m2) {
+    return Number(m2[1]) * 3600 + Number(m2[2]) * 60
+  }
+  return null
+}
+
 function parseCrosshairDateKey(time: any): string | null {
   if (!time || typeof time !== 'object') return null
+  // Unix timestamp (分钟K线)
+  if (typeof time === 'number' || (typeof time === 'object' && 'timestamp' in time)) {
+    const ts = typeof time === 'number' ? time : (time as any).timestamp
+    if (typeof ts === 'number' && ts > 0) {
+      const d = new Date(ts * 1000)
+      const pad = (n: number) => n.toString().padStart(2, '0')
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+    }
+  }
+  // BusinessDay (日K/周K/月K)
   const year = Number(time.year)
   const month = Number(time.month)
   const day = Number(time.day)
@@ -155,27 +192,40 @@ function addHistogram(chart: any, LW: any, options: any) {
 export default function InteractiveKline(props: {
   symbol: string
   market: string
-  initialInterval?: '1d' | '1w' | '1m'
+  initialInterval?: KlineInterval
   initialDays?: '60' | '120' | '250'
 }) {
   const [lwReady, setLwReady] = useState(!!getLW())
   const [libError, setLibError] = useState(false)
-  const [interval, setIntervalValue] = useState<'1d' | '1w' | '1m'>(props.initialInterval || '1d')
+  const [interval, setIntervalValue] = useState<KlineInterval>(props.initialInterval || '1d')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>('')
   const [data, setData] = useState<KlineItem[]>([])
   const [showRsi, setShowRsi] = useState(true)
   const [hoverTip, setHoverTip] = useState<HoverTip>({ visible: false, x: 0, y: 0, row: null })
 
+  const MINUTE_COUNT_MAP: Record<string, number> = {
+    '5m': 240,
+    '15m': 120,
+    '30m': 120,
+    '60m': 120,
+  }
+
   const fixedDays = useMemo(() => {
     const customDays = Number(props.initialDays)
     if (Number.isFinite(customDays) && customDays > 0) {
       return Math.floor(customDays)
     }
-    if (interval === '1m') return 360
+    if (interval === '1m') return 360  // month
     if (interval === '1w') return 180
+    // 分钟K线不需要 days，但保留默认值
+    if (isMinuteInterval(interval)) return 120
     return 120
   }, [props.initialDays, interval])
+
+  const minuteCount = useMemo(() => {
+    return MINUTE_COUNT_MAP[interval] || 240
+  }, [interval])
 
   const containerRef = useRef<HTMLDivElement | null>(null)
   const macdRef = useRef<HTMLDivElement | null>(null)
@@ -186,17 +236,19 @@ export default function InteractiveKline(props: {
     setError('')
     setHoverTip(prev => (prev.visible ? { visible: false, x: 0, y: 0, row: null } : prev))
     try {
-      const query = (days: number) =>
-        `/klines/${encodeURIComponent(props.symbol)}?market=${encodeURIComponent(props.market)}&days=${encodeURIComponent(String(days))}&interval=${encodeURIComponent(interval)}`
-      const attempts = Array.from(new Set([fixedDays, Math.max(90, Math.floor(fixedDays * 0.75))]))
+      const isMin = isMinuteInterval(interval)
+      const attempts = isMin ? [minuteCount] : Array.from(new Set([fixedDays, Math.max(90, Math.floor(fixedDays * 0.75))]))
       let best: KlineItem[] = []
       let lastError: unknown = null
       for (const d of attempts) {
         try {
-          const res = await fetchAPI<KlinesResponse>(query(d))
+          const q = isMin
+            ? `/klines/${encodeURIComponent(props.symbol)}?market=${encodeURIComponent(props.market)}&interval=${encodeURIComponent(interval)}&count=${encodeURIComponent(String(d))}`
+            : `/klines/${encodeURIComponent(props.symbol)}?market=${encodeURIComponent(props.market)}&days=${encodeURIComponent(String(d))}&interval=${encodeURIComponent(interval)}`
+          const res = await fetchAPI<KlinesResponse>(q)
           const kl = res.klines || []
           if (kl.length > best.length) best = kl
-          if (d === fixedDays && kl.length > 0) break
+          if (d === (isMin ? minuteCount : fixedDays) && kl.length > 0) break
         } catch (e) {
           lastError = e
         }
@@ -243,16 +295,27 @@ export default function InteractiveKline(props: {
   }, [lwReady])
 
   const series = useMemo(() => {
-    const klines = (data || []).slice().filter(k => !!parseBusinessDay(k.date))
+    const klines = (data || []).slice().filter(k => {
+      if (isMinuteInterval(interval)) {
+        return !!(k.time || k.date)
+      }
+      return !!parseBusinessDay(k.date)
+    })
+    const makeTime = (k: KlineItem) => {
+      if (isMinuteInterval(interval)) {
+        return parseMinuteTime(k.time || k.date) || 0
+      }
+      return parseBusinessDay(k.date) as BusinessDay
+    }
     const candles = klines.map(k => ({
-      time: parseBusinessDay(k.date) as BusinessDay,
+      time: makeTime(k) as any,
       open: k.open,
       high: k.high,
       low: k.low,
       close: k.close,
     }))
     const volumes = klines.map(k => ({
-      time: parseBusinessDay(k.date) as BusinessDay,
+      time: makeTime(k) as any,
       value: k.volume,
       color: k.close >= k.open ? 'rgba(239, 68, 68, 0.35)' : 'rgba(16, 185, 129, 0.35)',
     }))
@@ -266,7 +329,7 @@ export default function InteractiveKline(props: {
     const macd = computeMacd(closes)
     const rsi6 = computeRsi(closes, 6)
     return { klines, candles, volumes, ma5, ma10, ma20, volMa5, volMa10, macd, rsi6 }
-  }, [data])
+  }, [data, interval])
 
   const latestMetrics = useMemo(() => {
     if (!series.klines.length) return null
@@ -283,10 +346,15 @@ export default function InteractiveKline(props: {
   const indexByDate = useMemo(() => {
     const m = new Map<string, number>()
     for (let i = 0; i < series.klines.length; i++) {
-      m.set(series.klines[i].date, i)
+      const k = series.klines[i]
+      if (isMinuteInterval(interval)) {
+        m.set(k.time || k.date, i)
+      } else {
+        m.set(k.date, i)
+      }
     }
     return m
-  }, [series.klines])
+  }, [series.klines, interval])
   const showSkeleton = loading && !series.klines.length
 
   useEffect(() => {
@@ -322,6 +390,17 @@ export default function InteractiveKline(props: {
         barSpacing: defaultSpacing,
         minBarSpacing: 1,
         lockVisibleTimeRangeOnResize: true,
+        ...(isMinuteInterval(interval) ? {
+          timeVisible: true,
+          secondsVisible: false,
+          tickMarkFormatter: (time: any) => {
+            const ts = typeof time === 'number' ? time : (time?.timestamp || 0)
+            if (ts <= 0) return ''
+            const d = new Date(ts * 1000)
+            const pad = (n: number) => n.toString().padStart(2, '0')
+            return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+          },
+        } : {}),
       },
       handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
       handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
@@ -557,9 +636,13 @@ export default function InteractiveKline(props: {
           </Button>
           <div className="inline-flex rounded-lg border border-border/60 bg-accent/20 p-0.5">
             {([
-              { value: '1d', label: '日K' },
-              { value: '1w', label: '周K' },
-              { value: '1m', label: '月K' },
+              { value: '5m' as KlineInterval, label: '5分' },
+              { value: '15m' as KlineInterval, label: '15分' },
+              { value: '30m' as KlineInterval, label: '30分' },
+              { value: '60m' as KlineInterval, label: '60分' },
+              { value: '1d' as KlineInterval, label: '日K' },
+              { value: '1w' as KlineInterval, label: '周K' },
+              { value: '1m' as KlineInterval, label: '月K' },
             ] as const).map(item => (
               <button
                 key={item.value}

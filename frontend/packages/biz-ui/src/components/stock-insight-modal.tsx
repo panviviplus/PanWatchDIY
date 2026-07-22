@@ -17,6 +17,7 @@ import { Switch } from '@panwatch/base-ui/components/ui/switch'
 import { SuggestionBadge, type KlineSummary, type SuggestionInfo } from '@panwatch/biz-ui/components/suggestion-badge'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
 import InteractiveKline from '@panwatch/biz-ui/components/InteractiveKline'
+import IntradayChart from '@panwatch/biz-ui/components/IntradayChart'
 import { KlineIndicators } from '@panwatch/biz-ui/components/kline-indicators'
 import { buildKlineSuggestion } from '@/lib/kline-scorer'
 import StockPriceAlertPanel from '@panwatch/biz-ui/components/stock-price-alert-panel'
@@ -110,7 +111,7 @@ interface PortfolioSummaryResponse {
   }>
 }
 
-type InsightTab = 'overview' | 'kline' | 'suggestions' | 'news' | 'announcements' | 'reports' | 'deep'
+type InsightTab = 'overview' | 'intraday' | 'kline' | 'suggestions' | 'news' | 'announcements' | 'reports' | 'deep'
 
 interface StockAgentInfo {
   agent_name: string
@@ -1383,6 +1384,7 @@ export default function StockInsightModal(props: {
                 { id: 'suggestions', label: `建议 (${suggestions.length})` },
                 { id: 'reports', label: `报告 (${reports.length})` },
                 { id: 'deep', label: deepResult ? '深度 (1)' : '深度' },
+                { id: 'intraday', label: '分时' },
                 { id: 'kline', label: 'K线' },
                 { id: 'announcements', label: `公告 (${announcements.length})` },
                 { id: 'news', label: `新闻 (${news.length})` },
@@ -1655,6 +1657,10 @@ export default function StockInsightModal(props: {
                   </div>
                 </div>
               </div>
+            )}
+
+            {tab === 'intraday' && (
+              <IntradayChart symbol={symbol} market={market} />
             )}
 
             {tab === 'kline' && (

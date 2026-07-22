@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from datetime import datetime
 
 from pydantic import BaseModel, Field
@@ -8,12 +8,18 @@ from src.models.market import MarketCode
 
 router = APIRouter()
 
+# 支持的分钟间隔
+_MINUTE_INTERVALS = frozenset({"1m", "5m", "15m", "30m", "60m"})
+# 日级别间隔
+_DAILY_INTERVALS = frozenset({"1d", "1w", "1m", "d", "w", "m", "week", "month"})
+
 
 class KlineItem(BaseModel):
     symbol: str = Field(..., description="股票代码")
     market: str = Field(..., description="市场: CN/HK/US")
-    days: int | None = Field(default=60, description="K线天数")
-    interval: str | None = Field(default="1d", description="周期: 1d/1w/1m")
+    days: int | None = Field(default=60, description="K线天数(分钟线时忽略)")
+    interval: str | None = Field(default="1d", description="周期: 1d/1w/1m/5m/15m/30m/60m")
+    count: int | None = Field(default=None, description="分钟K线根数(默认 240)")
 
 
 class KlineBatchRequest(BaseModel):
@@ -48,6 +54,12 @@ def _serialize_klines(klines) -> list[dict]:
         }
         for k in klines
     ]
+
+
+def _is_minute_interval(interval: str) -> bool:
+    """判断是否是分钟级别的间隔。"""
+    iv = (interval or "").strip().lower()
+    return iv in _MINUTE_INTERVALS or iv in ("1min", "5min", "15min", "30min", "60min", "1h")
 
 
 def _aggregate_klines(klines, interval: str) -> list:
@@ -100,10 +112,29 @@ def _aggregate_klines(klines, interval: str) -> list:
 
 
 @router.get("/{symbol}")
-def get_klines(symbol: str, market: str = "CN", days: int = 60, interval: str = "1d"):
-    """获取单只股票K线数据"""
+def get_klines(
+    symbol: str,
+    market: str = "CN",
+    days: int = 60,
+    interval: str = "1d",
+    count: int = Query(default=240, description="分钟K线根数"),
+):
+    """获取单只股票K线数据（支持日K/周K/月K及分钟K线 1m/5m/15m/30m/60m）。"""
     market_code = _parse_market(market)
     collector = KlineCollector(market_code)
+
+    # 分钟K线
+    if _is_minute_interval(interval):
+        klines = collector.get_minute_klines(symbol, interval=interval, count=count)
+        return {
+            "symbol": symbol,
+            "market": market_code.value,
+            "count": count,
+            "interval": interval,
+            "klines": klines,
+        }
+
+    # 日级别K线
     klines = collector.get_klines(symbol, days=days)
     klines = _aggregate_klines(klines, interval)
     return {
@@ -112,6 +143,19 @@ def get_klines(symbol: str, market: str = "CN", days: int = 60, interval: str = 
         "days": days,
         "interval": interval,
         "klines": _serialize_klines(klines),
+    }
+
+
+@router.get("/{symbol}/intraday")
+def get_intraday(symbol: str, market: str = "CN"):
+    """获取当日分时数据（分钟级价格 + 均价 + 成交量）。"""
+    market_code = _parse_market(market)
+    collector = KlineCollector(market_code)
+    points = collector.get_intraday(symbol)
+    return {
+        "symbol": symbol,
+        "market": market_code.value,
+        "points": points,
     }
 
 
@@ -125,19 +169,29 @@ def get_klines_batch(payload: KlineBatchRequest):
     for item in payload.items:
         market_code = _parse_market(item.market)
         collector = KlineCollector(market_code)
-        days = item.days or 60
         interval = item.interval or "1d"
-        klines = collector.get_klines(item.symbol, days=days)
-        klines = _aggregate_klines(klines, interval)
-        results.append(
-            {
+
+        if _is_minute_interval(interval):
+            count = item.count or 240
+            klines = collector.get_minute_klines(item.symbol, interval=interval, count=count)
+            results.append({
+                "symbol": item.symbol,
+                "market": market_code.value,
+                "count": count,
+                "interval": interval,
+                "klines": klines,
+            })
+        else:
+            days = item.days or 60
+            klines = collector.get_klines(item.symbol, days=days)
+            klines = _aggregate_klines(klines, interval)
+            results.append({
                 "symbol": item.symbol,
                 "market": market_code.value,
                 "days": days,
                 "interval": interval,
                 "klines": _serialize_klines(klines),
-            }
-        )
+            })
 
     return results
 

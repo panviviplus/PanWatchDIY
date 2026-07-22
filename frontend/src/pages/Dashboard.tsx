@@ -240,28 +240,41 @@ export default function DashboardPage() {
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
           </Button>
         </div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+        <div className="flex flex-wrap items-center gap-2 text-[11px]">
           {hasHoldings && portfolioPnlPct != null && (
-            <span className="flex items-center gap-1">
+            <span className="flex items-center gap-1 rounded-md bg-accent/30 px-2 py-0.5">
               <span className="text-muted-foreground">组合浮盈</span>
               <span className={`font-mono ${moveColor(portfolioPnlPct)}`}>{pct(portfolioPnlPct)}</span>
             </span>
           )}
           {benchReady && (
-            <span className="flex items-center gap-1">
+            <span className="flex items-center gap-1 rounded-md bg-accent/30 px-2 py-0.5">
               <span className="text-muted-foreground">超额</span>
               <span className={`font-mono ${moveColor(bench!.excess_return)}`}>{pct(bench!.excess_return)}</span>
             </span>
           )}
-          {indices.slice(0, 5).map((ix) => (
-            <span key={`${ix.market}:${ix.symbol}`} className="flex items-center gap-1">
-              <span className="text-muted-foreground">{ix.name}</span>
-              {ix.current_price != null && (
-                <span className="font-mono text-foreground/80">{ix.current_price.toFixed(2)}</span>
-              )}
-              <span className={`font-mono ${moveColor(ix.change_pct)}`}>{pct(ix.change_pct)}</span>
-            </span>
-          ))}
+          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide">
+            {indices.slice(0, 6).map((ix) => {
+              const isUp = (ix.change_pct ?? 0) > 0
+              const isDown = (ix.change_pct ?? 0) < 0
+              return (
+                <span
+                  key={`${ix.market}:${ix.symbol}`}
+                  className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-accent/25 border border-border/40 px-2.5 py-1 cursor-pointer hover:bg-accent/40 transition-colors"
+                  title={`${ix.name} · 昨收 ${ix.prev_close?.toFixed(2) ?? '--'}`}
+                >
+                  <span className="text-muted-foreground max-w-[60px] truncate">{ix.name}</span>
+                  {ix.current_price != null && (
+                    <span className="font-mono text-foreground/85">{ix.current_price.toFixed(2)}</span>
+                  )}
+                  <span className={`inline-flex items-center gap-0.5 font-mono ${isUp ? 'text-rose-500' : isDown ? 'text-emerald-500' : 'text-muted-foreground'}`}>
+                    <span className="text-[10px]">{isUp ? '▲' : isDown ? '▼' : '─'}</span>
+                    {pct(ix.change_pct)}
+                  </span>
+                </span>
+              )
+            })}
+          </div>
         </div>
       </div>
 

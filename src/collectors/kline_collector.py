@@ -40,6 +40,14 @@ _FAIL_UNTIL: dict[str, float] = {}
 _FAIL_COOLDOWN_S = 60.0  # 交易时段:短冷却,便于尽快重试
 _FAIL_COOLDOWN_CLOSED_S = 900.0  # 收盘后:数据已定稿,失败/不足时长冷却,避免批量任务反复刷屏
 
+# 分钟K线与分时缓存
+_MINUTE_KLINE_CACHE: dict[str, tuple[float, int, list]] = {}
+_MINUTE_TTL_TRADING_S = 60   # 交易时段:分钟K线每 60s 刷新
+_MINUTE_TTL_CLOSED_S = 600   # 收盘后:长 TTL
+_INTRADAY_CACHE: dict[str, tuple[float, list]] = {}
+_INTRADAY_TTL_TRADING_S = 30  # 分时数据 30s 刷新
+_INTRADAY_TTL_CLOSED_S = 600
+
 
 def _fail_cooldown(market: MarketCode) -> float:
     """取数失败/不足时的冷却时长:交易时段短(尽快重试),收盘后长(重试无意义且易刷屏)。"""
@@ -81,6 +89,8 @@ def clear_kline_cache() -> None:
     """清空 K线内存缓存与失败冷却标记(测试隔离用)。"""
     _KLINE_CACHE.clear()
     _FAIL_UNTIL.clear()
+    _MINUTE_KLINE_CACHE.clear()
+    _INTRADAY_CACHE.clear()
 
 
 def get_index_klines(index_code: str, market: MarketCode, days: int = 120) -> list[KlineData]:
@@ -773,3 +783,92 @@ class KlineCollector:
             # K线形态
             "kline_pattern": indicators.kline_pattern,
         }
+
+    # ── 分钟K线与分时 ──────────────────────────────────────────────────────
+
+    def get_minute_klines(
+        self, symbol: str, interval: str = "5m", count: int = 240
+    ) -> list:
+        """获取分钟K线数据。
+
+        正缓存(按市场状态 TTL，交易时段短 / 收盘后长)。
+
+        Args:
+            symbol: 股票代码
+            interval: K线间隔 (1m/5m/15m/30m/60m)
+            count: K线根数
+        Returns:
+            包含 dict(date/time/open/close/high/low/volume) 的列表
+        """
+        from src.core.providers.kline.tencent import TencentMinuteKlineProvider
+
+        cache_key = f"min:{self.market.value}:{symbol}:{interval}:{count}"
+        now = time.time()
+
+        # 快路径:命中新鲜缓存
+        cached = _MINUTE_KLINE_CACHE.get(cache_key)
+        try:
+            md = MARKETS.get(self.market)
+            is_trading = md and md.is_trading_time()
+        except Exception:
+            is_trading = False
+        ttl = _MINUTE_TTL_TRADING_S if is_trading else _MINUTE_TTL_CLOSED_S
+        if cached and (now - cached[0]) < ttl and cached[1] >= count:
+            return cached[2][-count:] if len(cached[2]) > count else cached[2]
+
+        # 慢路径:联网获取
+        provider = TencentMinuteKlineProvider()
+        bars = provider.get_minute_klines(symbol, self.market.value, interval, count)
+        result = [
+            {
+                "date": b.time[:10] if " " in b.time else b.time,
+                "time": b.time,
+                "open": b.open,
+                "close": b.close,
+                "high": b.high,
+                "low": b.low,
+                "volume": b.volume,
+            }
+            for b in bars
+        ]
+        if result:
+            _MINUTE_KLINE_CACHE[cache_key] = (now, len(result), list(result))
+        return result
+
+    def get_intraday(self, symbol: str) -> list:
+        """获取当日分时数据(分钟级价格 + 均价 + 成交量)。
+
+        Returns:
+            包含 dict(time/price/volume/avg_price) 的列表
+        """
+        from src.core.providers.kline.tencent import TencentMinuteKlineProvider
+
+        cache_key = f"intraday:{self.market.value}:{symbol}"
+        now = time.time()
+
+        # 快路径:命中新鲜缓存
+        cached = _INTRADAY_CACHE.get(cache_key)
+        try:
+            md = MARKETS.get(self.market)
+            is_trading = md and md.is_trading_time()
+        except Exception:
+            is_trading = False
+        ttl = _INTRADAY_TTL_TRADING_S if is_trading else _INTRADAY_TTL_CLOSED_S
+        if cached and (now - cached[0]) < ttl:
+            return cached[1]
+
+        # 慢路径:联网获取
+        provider = TencentMinuteKlineProvider()
+        points = provider.get_intraday(symbol, self.market.value)
+        result = [
+            {
+                "time": p.time,
+                "price": p.price,
+                "volume": p.volume,
+                "avg_price": p.avg_price,
+            }
+            for p in points
+        ]
+        if result:
+            _INTRADAY_CACHE[cache_key] = (now, list(result))
+        return result

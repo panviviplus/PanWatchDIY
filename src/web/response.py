@@ -14,7 +14,12 @@ class ResponseWrapperMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send):
-        if scope["type"] != "http" or not scope.get("path", "").startswith("/api/"):
+        path = scope.get("path", "")
+        if scope["type"] != "http" or not path.startswith("/api/"):
+            await self.app(scope, receive, send)
+            return
+        # MCP JSON-RPC 端点使用原生 JSON-RPC 格式，不包装
+        if path.startswith("/api/mcp"):
             await self.app(scope, receive, send)
             return
 

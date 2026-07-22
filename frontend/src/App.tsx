@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom'
-import { TrendingUp, Bot, ScrollText, Settings, List, Database, Clock, LayoutDashboard, Github, BellRing, Sparkles, Activity } from 'lucide-react'
+import { TrendingUp, Bot, ScrollText, Settings, List, Database, Clock, LayoutDashboard, Github, BellRing, Sparkles, Activity, Wrench } from 'lucide-react'
 import { useTheme } from '@/hooks/use-theme'
 import { appApi, fetchAPI, isAuthenticated } from '@panwatch/api'
 import DashboardPage from '@/pages/Dashboard'
@@ -14,6 +14,7 @@ import AnalysisDetailPage from '@/pages/AnalysisDetail'
 import PriceAlertsPage from '@/pages/PriceAlerts'
 import PaperTradingPage from '@/pages/PaperTrading'
 import LoginPage from '@/pages/Login'
+import MCPPage from '@/pages/MCP'
 import LogsModal from '@panwatch/biz-ui/components/logs-modal'
 import AmbientBackground from '@panwatch/biz-ui/components/AmbientBackground'
 import ChatWidget from '@/components/ChatWidget'
@@ -32,6 +33,7 @@ const navItems = [
   { to: '/history', icon: Clock, label: '历史' },
   { to: '/datasources', icon: Database, label: '数据源' },
   { to: '/settings', icon: Settings, label: '设置' },
+  { to: '/mcp', icon: Wrench, label: 'MCP' },
 ]
 const desktopPrimaryNavItems = navItems.slice(0, 5)
 const desktopMoreNavItems = navItems.slice(5)
@@ -264,6 +266,7 @@ function App() {
           <Route path="/alerts" element={<PriceAlertsPage />} />
           <Route path="/datasources" element={<DataSourcesPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/mcp" element={<MCPPage />} />
           <Route path="/analysis/:symbol/:date" element={<AnalysisDetailPage />} />
         </Routes>
       </main>

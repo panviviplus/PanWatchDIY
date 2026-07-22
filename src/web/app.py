@@ -30,6 +30,7 @@ from src.web.api import (
 from src.web.api import factors
 from src.web.api import health
 from src.web.api import insights
+from src.web.api import mcp
 from src.web.api.auth import get_current_user
 from src.web.api.settings import get_app_version
 from src.web.response import ResponseWrapperMiddleware
@@ -53,6 +54,8 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 # 市场指数（公共数据，无需登录）
 app.include_router(market.router, prefix="/api/market", tags=["market"])
+# MCP JSON-RPC 端点（自带 Bearer/Basic 鉴权，不封装响应）
+app.include_router(mcp.router, prefix="/api/mcp", tags=["mcp"])
 
 # 需要登录的路由
 protected = [Depends(get_current_user)]

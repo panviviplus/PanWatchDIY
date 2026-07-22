@@ -70,6 +70,10 @@ class Account(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String, nullable=False)  # 账户名称，如 "招商证券"、"华泰证券"
     available_funds = Column(Float, default=0)  # 可用资金
+    other_funds = Column(Float, default=0)  # 其他资金（理财/逆回购等）
+    other_fund_items = Column(JSON, default=[])  # 其他资金明细 [{"label":"国债逆回购","amount":50000}]
+    initial_funds = Column(Float, nullable=True)  # 初始投入（用于累计收益率计算）
+    base_currency = Column(String, default="CNY")  # 基础货币
     enabled = Column(Boolean, default=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
@@ -85,12 +89,14 @@ class Stock(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     symbol = Column(String, nullable=False)
     name = Column(String, nullable=False)
-    market = Column(String, nullable=False)  # CN / HK / US
+    market = Column(String, nullable=False)  # CN / HK / US / FUND
+    security_type = Column(String, default="stock")  # stock / etf / index
     # 以下字段已废弃，持仓信息移至 Position 表
     cost_price = Column(Float, nullable=True)
     quantity = Column(Integer, nullable=True)
     invested_amount = Column(Float, nullable=True)
     sort_order = Column(Integer, default=0)
+    is_featured = Column(Boolean, default=False)  # 精华/重点关注
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -117,18 +123,51 @@ class Position(Base):
     stock_id = Column(
         Integer, ForeignKey("stocks.id", ondelete="CASCADE"), nullable=False
     )
-    cost_price = Column(Float, nullable=False)  # 成本价
+    cost_price = Column(Float, nullable=False)  # 成本价（加权平均）
     quantity = Column(Integer, nullable=False)  # 持仓数量
     invested_amount = Column(Float, nullable=True)  # 投入资金（用于盘中监控）
     sort_order = Column(Integer, default=0)
     trading_style = Column(
         String, default="swing"
     )  # short: 短线, swing: 波段, long: 长线
+    status = Column(String, default="open")  # open / closed
+    closed_at = Column(DateTime, nullable=True)
+    realized_pnl = Column(Float, nullable=True)  # 已实现盈亏
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     account = relationship("Account", back_populates="positions")
     stock = relationship("Stock", back_populates="positions")
+    trades = relationship(
+        "PositionTrade", back_populates="position", cascade="all, delete-orphan"
+    )
+
+
+class PositionTrade(Base):
+    """持仓交易流水（加仓/减仓记录）"""
+
+    __tablename__ = "position_trades"
+    __table_args__ = (
+        Index("ix_position_trades_position_id", "position_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    position_id = Column(
+        Integer, ForeignKey("positions.id", ondelete="CASCADE"), nullable=False
+    )
+    side = Column(String, nullable=False)  # buy / sell
+    price = Column(Float, nullable=False)
+    quantity = Column(Integer, nullable=False)
+    amount = Column(Float, nullable=False)  # 成交金额
+    cost_before = Column(Float, nullable=True)  # 交易前成本价
+    qty_before = Column(Integer, nullable=True)  # 交易前数量
+    cost_after = Column(Float, nullable=True)  # 交易后成本价（加权平均）
+    qty_after = Column(Integer, nullable=True)  # 交易后数量
+    note = Column(String, default="")
+    traded_at = Column(DateTime, nullable=True)  # 实际交易时间
+    created_at = Column(DateTime, server_default=func.now())
+
+    position = relationship("Position", back_populates="trades")
 
 
 class StockAgent(Base):

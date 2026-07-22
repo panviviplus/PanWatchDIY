@@ -1585,6 +1585,79 @@ def _m118_paper_trading_market_allocations(conn: Connection) -> None:
         )
 
 
+def _m119_stock_security_type(conn: Connection) -> None:
+    """Add security_type and is_featured columns to stocks."""
+    _add_column_if_missing(
+        conn, "stocks", "security_type",
+        "ALTER TABLE stocks ADD COLUMN security_type TEXT DEFAULT 'stock'",
+    )
+    _add_column_if_missing(
+        conn, "stocks", "is_featured",
+        "ALTER TABLE stocks ADD COLUMN is_featured INTEGER DEFAULT 0",
+    )
+
+
+def _m120_account_extra_fields(conn: Connection) -> None:
+    """Add other_funds, other_fund_items, initial_funds, base_currency to accounts."""
+    _add_column_if_missing(
+        conn, "accounts", "other_funds",
+        "ALTER TABLE accounts ADD COLUMN other_funds REAL DEFAULT 0",
+    )
+    _add_column_if_missing(
+        conn, "accounts", "other_fund_items",
+        "ALTER TABLE accounts ADD COLUMN other_fund_items TEXT DEFAULT '[]'",
+    )
+    _add_column_if_missing(
+        conn, "accounts", "initial_funds",
+        "ALTER TABLE accounts ADD COLUMN initial_funds REAL",
+    )
+    _add_column_if_missing(
+        conn, "accounts", "base_currency",
+        "ALTER TABLE accounts ADD COLUMN base_currency TEXT DEFAULT 'CNY'",
+    )
+
+
+def _m121_position_trade_table(conn: Connection) -> None:
+    """Add status/closed_at/realized_pnl to positions; create position_trades table."""
+    _add_column_if_missing(
+        conn, "positions", "status",
+        "ALTER TABLE positions ADD COLUMN status TEXT DEFAULT 'open'",
+    )
+    _add_column_if_missing(
+        conn, "positions", "closed_at",
+        "ALTER TABLE positions ADD COLUMN closed_at DATETIME",
+    )
+    _add_column_if_missing(
+        conn, "positions", "realized_pnl",
+        "ALTER TABLE positions ADD COLUMN realized_pnl REAL",
+    )
+
+    if not _has_table(conn, "position_trades"):
+        conn.execute(text(
+            """
+CREATE TABLE position_trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    position_id INTEGER NOT NULL REFERENCES positions(id) ON DELETE CASCADE,
+    side TEXT NOT NULL,
+    price REAL NOT NULL,
+    quantity INTEGER NOT NULL,
+    amount REAL NOT NULL,
+    cost_before REAL,
+    qty_before INTEGER,
+    cost_after REAL,
+    qty_after INTEGER,
+    note TEXT DEFAULT '',
+    traded_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+"""
+        ))
+    _create_index_if_missing(
+        conn, "ix_position_trades_position_id",
+        "CREATE INDEX ix_position_trades_position_id ON position_trades(position_id)",
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(101, "agent_config_kind_and_visibility", _m101_agent_config_kind),
     Migration(102, "backfill_agent_kind_data", _m102_backfill_agent_kind),
@@ -1604,6 +1677,9 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(116, "chat_tables", _m116_chat_tables),
     Migration(117, "chat_initial_context", _m117_chat_initial_context),
     Migration(118, "paper_trading_market_allocations", _m118_paper_trading_market_allocations),
+    Migration(119, "stock_security_type", _m119_stock_security_type),
+    Migration(120, "account_extra_fields", _m120_account_extra_fields),
+    Migration(121, "position_trade_table", _m121_position_trade_table),
 )
 
 

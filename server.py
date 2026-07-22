@@ -1065,7 +1065,7 @@ def _build_ai_client(
     model: AIModel | None, service: AIService | None, proxy: str
 ) -> AIClient:
     """根据解析后的 model+service 构建 AIClient"""
-    if model and service:
+    if model and service and (service.api_key or "").strip() and (service.base_url or "").strip():
         return AIClient(
             base_url=service.base_url,
             api_key=service.api_key,

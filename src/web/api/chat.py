@@ -180,7 +180,7 @@ def _get_ai_client(db: Session, model_id: int | None = None) -> AIClient:
     if model:
         service = db.query(AIService).filter(AIService.id == model.service_id).first()
 
-    if model and service:
+    if model and service and (service.api_key or "").strip() and (service.base_url or "").strip():
         return AIClient(
             base_url=service.base_url,
             api_key=service.api_key,

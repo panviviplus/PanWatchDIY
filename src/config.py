@@ -63,6 +63,7 @@ class StockConfig:
     symbol: str
     name: str
     market: MarketCode
+    security_type: str = "stock"  # stock / etf / index
 
 
 @dataclass

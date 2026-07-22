@@ -24,6 +24,10 @@ from src.web.models import (
     Stock,
     StockSuggestion,
 )
+from src.core.chat_actions import extract_actions, strip_actions_block
+from src.core.position_daily_pnl import get_position_pnl_summary
+from src.core.position_trades_context import get_recent_trades_context
+from src.core.stock_news_context import get_news_context
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -453,6 +457,39 @@ def delete_conversation(conversation_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+class RenameConversationBody(BaseModel):
+    title: str
+
+
+@router.put("/conversations/{conversation_id}")
+def rename_conversation(
+    conversation_id: int,
+    body: RenameConversationBody,
+    db: Session = Depends(get_db),
+):
+    """重命名对话。"""
+    conv = db.query(ChatConversation).filter(ChatConversation.id == conversation_id).first()
+    if not conv:
+        raise HTTPException(404, "对话不存在")
+    conv.title = body.title.strip()[:100]
+    db.commit()
+    return {"ok": True, "title": conv.title}
+
+
+@router.delete("/conversations/{conversation_id}/messages")
+def clear_conversation_messages(
+    conversation_id: int,
+    db: Session = Depends(get_db),
+):
+    """清空对话消息（保留对话本身）。"""
+    conv = db.query(ChatConversation).filter(ChatConversation.id == conversation_id).first()
+    if not conv:
+        raise HTTPException(404, "对话不存在")
+    db.query(ChatMessage).filter(ChatMessage.conversation_id == conversation_id).delete()
+    db.commit()
+    return {"ok": True}
+
+
 @router.post("/conversations/{conversation_id}/messages")
 async def send_message(
     conversation_id: int,
@@ -532,6 +569,21 @@ async def send_message(
             # 把上下文追加到 system message
             messages_for_ai[0]["content"] += "\n\n--- 当前数据 ---\n" + "\n\n".join(context_parts)
 
+        # 注入持仓盈亏和交易流水上下文
+        try:
+            pnl_ctx = get_position_pnl_summary(db)
+            if pnl_ctx:
+                messages_for_ai[0]["content"] += "\n\n" + pnl_ctx
+            if conv.stock_symbol:
+                trades_ctx = get_recent_trades_context(db, stock_symbol=conv.stock_symbol, limit=5)
+                if trades_ctx:
+                    messages_for_ai[0]["content"] += "\n\n" + trades_ctx
+                news_ctx = get_news_context(db, stock_symbol=conv.stock_symbol)
+                if news_ctx:
+                    messages_for_ai[0]["content"] += "\n\n" + news_ctx
+        except Exception:
+            pass  # 上下文注入失败不影响对话
+
         # 调用 AI（带 tool use，用于按需获取更多数据）
         ai_client = _get_ai_client(db, conv.ai_model_id)
         ai_response = ""
@@ -581,11 +633,15 @@ async def send_message(
             logger.error(f"AI 对话失败: {e}")
             ai_response = f"抱歉，AI 服务暂时不可用：{e}"
 
-        # 保存 AI 回复
+        # 提取结构化动作
+        actions = extract_actions(ai_response)
+        display_content = strip_actions_block(ai_response)
+
+        # 保存 AI 回复（存储清洗后的内容）
         assistant_msg = ChatMessage(
             conversation_id=conversation_id,
             role="assistant",
-            content=ai_response,
+            content=display_content,
         )
         db.add(assistant_msg)
 
@@ -598,6 +654,18 @@ async def send_message(
             "id": assistant_msg.id,
             "role": "assistant",
             "content": assistant_msg.content,
+            "actions": [
+                {
+                    "action": a.action,
+                    "label": a.label,
+                    "symbol": a.symbol,
+                    "market": a.market,
+                    "price": a.price,
+                    "reason": a.reason,
+                    "params": a.params,
+                }
+                for a in actions
+            ],
             "created_at": str(assistant_msg.created_at or ""),
         }
     finally:

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { MessageCircle, X, Plus, Trash2, Send, ChevronLeft, XCircle } from 'lucide-react'
+import { MessageCircle, X, Plus, Trash2, Send, ChevronLeft, XCircle, Eraser } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { chatApi, type ChatConversation, type ChatMessage } from '@panwatch/api'
+import ChatActionCard from '@/components/ChatActionCard'
+import type { ChatActionData } from '@panwatch/api'
 
 interface StockContext {
   symbol: string
@@ -230,6 +232,21 @@ export default function ChatWidget() {
               <Plus className="w-4 h-4" />
             </button>
           )}
+          {view === 'chat' && activeConvId != null && (
+            <button
+              onClick={async () => {
+                if (activeConvId == null) return
+                try {
+                  await chatApi.clearMessages(activeConvId)
+                  setMessages([])
+                } catch { /* ignore */ }
+              }}
+              className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+              title="清空消息"
+            >
+              <Eraser className="w-4 h-4" />
+            </button>
+          )}
           <button
             onClick={() => setOpen(false)}
             className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
@@ -322,8 +339,17 @@ export default function ChatWidget() {
                   }`}
                 >
                   {msg.role === 'assistant' ? (
-                    <div className="prose prose-sm dark:prose-invert max-w-none [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5 [&_h1]:text-[15px] [&_h2]:text-[14px] [&_h3]:text-[13px]">
-                      <ReactMarkdown>{msg.content}</ReactMarkdown>
+                    <div>
+                      <div className="prose prose-sm dark:prose-invert max-w-none [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5 [&_h1]:text-[15px] [&_h2]:text-[14px] [&_h3]:text-[13px]">
+                        <ReactMarkdown>{msg.content}</ReactMarkdown>
+                      </div>
+                      {msg.actions && msg.actions.length > 0 && (
+                        <div className="mt-2 space-y-1">
+                          {msg.actions.map((act: ChatActionData, i: number) => (
+                            <ChatActionCard key={i} action={act} />
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ) : (
                     msg.content

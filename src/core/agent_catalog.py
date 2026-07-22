@@ -17,6 +17,7 @@ WORKFLOW_AGENT_NAMES: tuple[str, ...] = (
     "intraday_monitor",
     "daily_report",
     "fund_holding_analyst",
+    "etf_holding_analyst",
 )
 
 # 仅限基金使用的 Agent
@@ -182,6 +183,20 @@ AGENT_SEED_SPECS: tuple[AgentSeedSpec, ...] = (
         display_order=45,
         config={
             "market_filter": ["FUND"],
+        },
+    ),
+    AgentSeedSpec(
+        name="etf_holding_analyst",
+        display_name="ETF 成分分析",
+        description="分析场内 ETF 成分股、折溢价、与持仓重叠度，给出结构化建议（需配置市场为 FUND、security_type 为 etf 的标的）",
+        enabled=False,  # 需用户手动绑定 ETF 标的后启用
+        schedule="0 20 * * 5",  # 每周五晚8点
+        execution_mode="batch",
+        kind=AGENT_KIND_WORKFLOW,
+        visible=True,
+        display_order=46,
+        config={
+            "top_holdings": 15,
         },
     ),
 )

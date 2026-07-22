@@ -18,6 +18,7 @@ from src.web.models import (
     PaperTradingPosition,
     PaperTradingTrade,
     StrategySignalRun,
+    Stock,
 )
 from src.core.backtest.cost_model import CostModel
 
@@ -34,6 +35,19 @@ MIN_PROFIT_FOR_TRAILING = 0.05
 TRAILING_STOP_PCT = 0.10
 # 时间止损:无 signal.holding_days 时的默认最大持有自然日
 DEFAULT_TIME_STOP_DAYS = 20
+
+
+def _get_security_type(db: Session, stock_symbol: str, stock_market: str = "CN") -> str:
+    """查询股票的 security_type,用于区分 ETF 交易成本。默认返回 'stock'。"""
+    try:
+        stock = (
+            db.query(Stock)
+            .filter(Stock.symbol == stock_symbol, Stock.market == stock_market)
+            .first()
+        )
+        return (stock.security_type or "stock") if stock else "stock"
+    except Exception:
+        return "stock"
 
 
 def _position_weight(rank_score: float) -> float:
@@ -359,7 +373,8 @@ class PaperTradingEngine:
                 continue  # 子池额度不足以买入最小一手
 
             # 含交易成本的实际买入流出
-            buy_fill = COST_MODEL.fill("buy", entry_price, quantity)
+            sec_type = _get_security_type(db, sig.stock_symbol, sig.stock_market)
+            buy_fill = COST_MODEL.fill("buy", entry_price, quantity, security_type=sec_type)
             buy_outlay = -buy_fill.cash_delta
 
             # 基于入场价计算止损/止盈
@@ -432,8 +447,9 @@ class PaperTradingEngine:
         """平仓单个持仓，返回交易记录。"""
         now = _utc_now()
         # 含交易成本的净盈亏:卖出净回收 − 建仓含费投入(与建仓口径一致,资金守恒)
-        buy_cost = -COST_MODEL.fill("buy", pos.entry_price, pos.quantity).cash_delta
-        sell_fill = COST_MODEL.fill("sell", exit_price, pos.quantity)
+        sec_type = _get_security_type(db, pos.stock_symbol, pos.stock_market)
+        buy_cost = -COST_MODEL.fill("buy", pos.entry_price, pos.quantity, security_type=sec_type).cash_delta
+        sell_fill = COST_MODEL.fill("sell", exit_price, pos.quantity, security_type=sec_type)
         sell_proceeds = sell_fill.cash_delta
         pnl = round(sell_proceeds - buy_cost, 4)
         pnl_pct = (pnl / buy_cost * 100) if buy_cost > 0 else 0.0
@@ -518,8 +534,9 @@ class PaperTradingEngine:
 
             # 更新现价、净浮动盈亏(含若此刻平仓的双边成本)、持仓期最高价
             pos.current_price = current_price
-            _buy_cost_u = -COST_MODEL.fill("buy", pos.entry_price, pos.quantity).cash_delta
-            _sell_u = COST_MODEL.fill("sell", current_price, pos.quantity).cash_delta
+            _sec_type = _get_security_type(db, pos.stock_symbol, pos.stock_market)
+            _buy_cost_u = -COST_MODEL.fill("buy", pos.entry_price, pos.quantity, security_type=_sec_type).cash_delta
+            _sell_u = COST_MODEL.fill("sell", current_price, pos.quantity, security_type=_sec_type).cash_delta
             pos.unrealized_pnl = round(_sell_u - _buy_cost_u, 4)
             if pos.highest_price is None or current_price > pos.highest_price:
                 pos.highest_price = current_price

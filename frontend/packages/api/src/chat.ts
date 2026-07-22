@@ -1,5 +1,15 @@
 import { fetchAPI } from './client'
 
+export interface ChatActionData {
+  action: string
+  label: string
+  symbol?: string
+  market?: string
+  price?: number | null
+  reason?: string
+  params?: Record<string, any>
+}
+
 export interface ChatConversation {
   id: number
   title: string
@@ -12,6 +22,7 @@ export interface ChatMessage {
   id: number
   role: 'user' | 'assistant' | 'system'
   content: string
+  actions?: ChatActionData[]
   created_at: string
 }
 
@@ -35,6 +46,17 @@ export const chatApi = {
 
   deleteConversation: (id: number) =>
     fetchAPI<{ ok: boolean }>(`/chat/conversations/${id}`, {
+      method: 'DELETE',
+    }),
+
+  renameConversation: (id: number, title: string) =>
+    fetchAPI<{ ok: boolean; title: string }>(`/chat/conversations/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ title }),
+    }),
+
+  clearMessages: (id: number) =>
+    fetchAPI<{ ok: boolean }>(`/chat/conversations/${id}/messages`, {
       method: 'DELETE',
     }),
 

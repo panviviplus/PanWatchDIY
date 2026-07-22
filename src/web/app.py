@@ -30,6 +30,7 @@ from src.web.api import (
 from src.web.api import factors
 from src.web.api import health
 from src.web.api import insights
+from src.web.api import local_skills
 from src.web.api import mcp
 from src.web.api.auth import get_current_user
 from src.web.api.settings import get_app_version
@@ -172,6 +173,12 @@ app.include_router(
     chat.router,
     prefix="/api/chat",
     tags=["chat"],
+    dependencies=protected,
+)
+app.include_router(
+    local_skills.router,
+    prefix="/api/local-skills",
+    tags=["local-skills"],
     dependencies=protected,
 )
 

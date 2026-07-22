@@ -92,26 +92,14 @@ from src.core.price_alert_engine import ENGINE
 from src.core.json_safe import to_jsonable
 from src.config import Settings
 
-# ── ETF 功能桩（第 2 批施工后替换为真实实现） ──
+# ── ETF 功能（使用 etf_collector 真实实现） ──
 
-def get_etf_holdings(fund_code: str, top: int = 10) -> list[dict]:
-    """[桩] ETF 持仓查询 —— 第 2 批施工后启用"""
-    return []
-
-
-def get_etf_overview(fund_code: str, top: int = 10, nav_days: int = 180) -> dict | None:
-    """[桩] ETF 概览 —— 第 2 批施工后启用"""
-    return None
-
-
-def get_etf_spot(symbol: str) -> dict | None:
-    """[桩] ETF 实时行情 —— 第 2 批施工后启用"""
-    return None
-
-
-def get_etf_nav_history(symbol: str, days: int = 180) -> list[dict]:
-    """[桩] ETF 净值走势 —— 第 2 批施工后启用"""
-    return []
+from src.collectors.etf_collector import (
+    get_etf_holdings,
+    get_etf_overview,
+    get_etf_spot,
+    get_etf_nav_history,
+)
 
 
 router = APIRouter()
@@ -2281,6 +2269,86 @@ def _fund_holdings(arguments: dict[str, Any], db: Session) -> dict[str, Any]:
         )
 
 
+# ==================== ETF 专用 ====================
+
+def _etf_spot(arguments: dict[str, Any], db: Session) -> dict[str, Any]:
+    _ = db
+    _require_args(arguments, ["symbol"])
+    symbol = str(arguments["symbol"]).strip()
+    try:
+        spot = get_etf_spot(symbol)
+        if spot is None:
+            raise McpToolError(
+                error_code=ERR_NOT_FOUND,
+                message=f"未找到 ETF {symbol} 的行情数据",
+                hint="请确认代码是否正确,或当前非交易时段",
+                retryable=True,
+            )
+        return spot
+    except McpToolError:
+        raise
+    except Exception as e:
+        raise McpToolError(
+            error_code=ERR_INTERNAL,
+            message=f"获取 ETF 行情失败: {e}",
+            hint="请检查代码是否正确",
+            retryable=True,
+        )
+
+
+def _etf_nav(arguments: dict[str, Any], db: Session) -> dict[str, Any]:
+    _ = db
+    _require_args(arguments, ["symbol"])
+    symbol = str(arguments["symbol"]).strip()
+    days = int(arguments.get("days", 180))
+    try:
+        nav = get_etf_nav_history(symbol, days=days)
+        return {"symbol": symbol, "points": nav, "count": len(nav)}
+    except Exception as e:
+        raise McpToolError(
+            error_code=ERR_INTERNAL,
+            message=f"获取 ETF 净值失败: {e}",
+            hint="请检查代码是否正确",
+            retryable=True,
+        )
+
+
+def _etf_holdings(arguments: dict[str, Any], db: Session) -> dict[str, Any]:
+    _ = db
+    _require_args(arguments, ["symbol"])
+    symbol = str(arguments["symbol"]).strip()
+    top = int(arguments.get("top", 30))
+    try:
+        holdings = get_etf_holdings(symbol, top=top)
+        return {"symbol": symbol, "holdings": holdings, "count": len(holdings)}
+    except Exception as e:
+        raise McpToolError(
+            error_code=ERR_INTERNAL,
+            message=f"获取 ETF 成分股失败: {e}",
+            hint="请检查代码是否正确",
+            retryable=True,
+        )
+
+
+def _etf_overview(arguments: dict[str, Any], db: Session) -> dict[str, Any]:
+    _ = db
+    _require_args(arguments, ["symbol"])
+    symbol = str(arguments["symbol"]).strip()
+    top = int(arguments.get("top", 30))
+    nav_days = int(arguments.get("nav_days", 180))
+    try:
+        overview = get_etf_overview(symbol, top=top, nav_days=nav_days)
+        overview["updated_at"] = int(time.time() * 1000)
+        return overview
+    except Exception as e:
+        raise McpToolError(
+            error_code=ERR_INTERNAL,
+            message=f"获取 ETF 概览失败: {e}",
+            hint="请检查代码是否正确",
+            retryable=True,
+        )
+
+
 # ==================== 工具类 ====================
 
 def _get_exchange_rates(arguments: dict[str, Any], db: Session) -> dict[str, Any]:
@@ -3649,6 +3717,85 @@ TOOLS: list[dict[str, Any]] = [
         "outputSchema": {"type": "object", "properties": {"fund_code": {"type": "string"}, "holdings": {"type": "array"}, "count": {"type": "integer"}}},
         "examples": [{"title": "重仓股", "arguments": {"fund_code": "161725", "topline": 10}}],
     },
+    # ==================== ETF 专用 ====================
+    {
+        "name": "etf.spot",
+        "description": "获取场内 ETF 实时行情（含 IOPV、折溢价率、规模、成交额）",
+        "access": "read",
+        "tags": ["etf", "read"],
+        "risk_level": "low",
+        "cost_hint": "low",
+        "inputSchema": {
+            "type": "object",
+            "description": "返回 ETF 实时行情,IOPV 实时估值仅在交易时段可用。",
+            "required": ["symbol"],
+            "properties": {"symbol": {"type": "string", "description": "ETF 代码,如 159919、510050。"}},
+            "additionalProperties": False,
+        },
+        "outputSchema": {"type": "object", "properties": {"symbol": {"type": "string"}, "name": {"type": "string"}, "price": {"type": "number"}, "iopv": {"type": "number"}, "premium_pct": {"type": "number"}}},
+        "examples": [{"title": "ETF 行情", "arguments": {"symbol": "159919"}}],
+    },
+    {
+        "name": "etf.nav",
+        "description": "获取 ETF 净值历史走势",
+        "access": "read",
+        "tags": ["etf", "read"],
+        "risk_level": "low",
+        "cost_hint": "medium",
+        "inputSchema": {
+            "type": "object",
+            "description": "返回 ETF 单位净值历史数据。",
+            "required": ["symbol"],
+            "properties": {
+                "symbol": {"type": "string", "description": "ETF 代码。"},
+                "days": {"type": "integer", "default": 180, "description": "回看天数。"},
+            },
+            "additionalProperties": False,
+        },
+        "outputSchema": {"type": "object", "properties": {"points": {"type": "array"}, "since_return_pct": {"type": "number"}}},
+        "examples": [{"title": "净值走势", "arguments": {"symbol": "159919", "days": 90}}],
+    },
+    {
+        "name": "etf.holdings",
+        "description": "获取 ETF 成分股（按占净值降序）",
+        "access": "read",
+        "tags": ["etf", "read"],
+        "risk_level": "low",
+        "cost_hint": "medium",
+        "inputSchema": {
+            "type": "object",
+            "description": "返回 ETF 最新季报成分股,按占净值比例降序。",
+            "required": ["symbol"],
+            "properties": {
+                "symbol": {"type": "string", "description": "ETF 代码。"},
+                "top": {"type": "integer", "default": 30, "description": "返回前 N 只成分股。"},
+            },
+            "additionalProperties": False,
+        },
+        "outputSchema": {"type": "object", "properties": {"symbol": {"type": "string"}, "holdings": {"type": "array"}, "count": {"type": "integer"}}},
+        "examples": [{"title": "成分股", "arguments": {"symbol": "159919", "top": 10}}],
+    },
+    {
+        "name": "etf.overview",
+        "description": "获取 ETF 综合概览（行情+成分股+净值走势）",
+        "access": "read",
+        "tags": ["etf", "read"],
+        "risk_level": "low",
+        "cost_hint": "high",
+        "inputSchema": {
+            "type": "object",
+            "description": "一次返回 ETF 的实时行情、成分股和净值走势。",
+            "required": ["symbol"],
+            "properties": {
+                "symbol": {"type": "string", "description": "ETF 代码。"},
+                "top": {"type": "integer", "default": 30, "description": "成分股截断数。"},
+                "nav_days": {"type": "integer", "default": 180, "description": "净值走势天数。"},
+            },
+            "additionalProperties": False,
+        },
+        "outputSchema": {"type": "object", "properties": {"symbol": {"type": "string"}, "spot": {"type": "object"}, "holdings": {"type": "array"}, "nav_history": {"type": "array"}}},
+        "examples": [{"title": "ETF 综合概览", "arguments": {"symbol": "510050", "top": 10, "nav_days": 90}}],
+    },
     # ==================== 工具类 ====================
     {
         "name": "exchange_rates.get",
@@ -3811,6 +3958,16 @@ def _call_tool(
         return _fund_overview(arguments, db)
     if name == "funds.holdings":
         return _fund_holdings(arguments, db)
+
+    # ETF 专用
+    if name == "etf.spot":
+        return _etf_spot(arguments, db)
+    if name == "etf.nav":
+        return _etf_nav(arguments, db)
+    if name == "etf.holdings":
+        return _etf_holdings(arguments, db)
+    if name == "etf.overview":
+        return _etf_overview(arguments, db)
 
     # 工具类
     if name == "exchange_rates.get":

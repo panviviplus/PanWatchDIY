@@ -2,7 +2,7 @@
 
 > **来源**: [PanWatch PR #71](https://github.com/TNT-Likely/PanWatch/pull/71) by zackzhangkai
 > **目标仓库**: [PanWatchDIY](https://github.com/panviviplus/PanWatchDIY)
-> **状态**: 施工中 🚧
+> **状态**: 第 0-4 批已完成 ✅ | 第 5 批 (行情UI增强) 待定
 
 ---
 
